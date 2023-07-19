@@ -1,0 +1,74 @@
+# This is a GitHub Workflow that helps verify commits #
+# using the user's GPG keys. #
+
+name: GPG Signature Verification
+
+on:
+  # Workflow will be triggered during Pull Requests on main/master branch
+  pull_request:
+    types:
+      - opened
+      - synchronize
+        
+    branches: [ "main", "master" ]
+
+  # Enables manual run of the workflow if required
+  workflow_dispatch:
+
+env:
+  # Commit hash that triggered the workflow
+  COMMIT_HASH: ${{ github.event.pull_request.head.sha }}
+
+jobs:
+  # This job provides signature verification of commits
+  verify:
+    runs-on: self-hosted
+
+    steps:
+      #- name: Install Git version > 2.18
+      #  run: |
+      #    git --version
+      #    apt-get update -y
+      #    apt-get install -y software-properties-common
+      #    add-apt-repository -y ppa:git-core/ppa
+      #    apt-get update -y
+      #    apt-get install -y git
+          
+      # Checks out GitHub repository code
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.head_ref }}
+
+      # Installs a number of dependency packages
+      #- name: Install required dependencies
+      #  run: |
+      #    if ! command -v gnupg &> /dev/null; then
+      #      apt-get install gnupg
+      #    else
+      #      echo "GnuPg package is already installed"
+      #    fi
+          #apt-get install curl
+          #apt-get install vim
+          
+      - name: Display the commit hash & branch that triggered this process
+        run: echo "Triggering workflow for branch ${{ github.ref }} and commit-hash ${{ github.event.pull_request.head.sha }}"
+
+      - name: Retrieve the email-ID/username of the user
+        run: |
+          author_email=$(git show --format='%ae' -s "${{ env.COMMIT_HASH }}")
+          username="${author_email%%@*}"
+          echo "USER_ID=${username}"
+          echo "USER_ID=${username}" >> $GITHUB_ENV
+          
+      - name: Read key from the Vault
+        run: |
+          curl --header "X-Vault-Namespace: anet/sw/sec/developer-pgp" --request POST --data '{"role_id": "d876db5d-71d2-a849-0925-b7bf7f4578cb","secret_id": "b44e5c5c-1424-6ad2-c8a3-5ad30565e4d2"}' https://vault.aristanetworks.com:8200/v1/auth/approle/login | jq -r '.auth.client_token' > token.txt
+
+          TOKEN=$(cat token.txt)
+          USER_ID="${{ env.USER_ID }}"
+
+          curl --header "X-Vault-Namespace: anet/sw/sec/developer-pgp" --header "X-Vault-Token: ${TOKEN}" --request GET https://vault.aristanetworks.com:8200/v1/gpg/keys/${USER_ID} | jq -r '.data.public_key' | gpg --import
+          gpg --list-keys
+
+      - name: Verify the commit using the commiter's signature
+        run: git verify-commit -v ${{ github.event.pull_request.head.sha }}
